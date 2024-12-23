@@ -2,7 +2,7 @@ import SwiftUI
 import Translation
 import UniformTypeIdentifiers
 
-public struct ContentView: View {
+public struct TranslateImageView: View {
   @State private var selectedImage: URL?
   @State private var translatedImage: URL?
   @State private var isTranslating = false
@@ -114,7 +114,11 @@ public struct ContentView: View {
     .padding()
     .frame(minWidth: 800, minHeight: 600)
     .translationTask(configuration) { session in
-      guard let selectedImage = selectedImage else { return }
+      print("Starting translation task")
+      guard let selectedImage = selectedImage else {
+        print("No image selected")
+        return
+      }
       isTranslating = true
       error = nil
       statusMessage = "Detecting Japanese text..."
@@ -135,6 +139,7 @@ public struct ContentView: View {
   }
 
   private func selectImage() {
+    print("Selecting image")
     let panel = NSOpenPanel()
     panel.allowedContentTypes = [.image]
     panel.allowsMultipleSelection = false
@@ -151,16 +156,22 @@ public struct ContentView: View {
   }
 
   private func startTranslation() {
+    print(
+      "Starting translation with showBoxes: \(showBoxes), showTranslations: \(showTranslations)")
     worker.updateConfig(showBoxes: showBoxes, showTranslations: showTranslations)
-    configuration = .init(
-      source: Locale.Language(identifier: "ja"),
-      target: Locale.Language(identifier: "en")
-    )
+    DispatchQueue.main.async {
+      print("configuration before \(String(describing: configuration))")
+      configuration = .init(
+        source: Locale.Language(identifier: "ja"),
+        target: Locale.Language(identifier: "en")
+      )
+      print("configuration after \(String(describing: configuration))")
+    }
   }
 }
 
 struct ContentView_Previews: PreviewProvider {
   static var previews: some View {
-    ContentView()
+    TranslateImageView()
   }
 }
