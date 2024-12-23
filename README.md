@@ -24,20 +24,20 @@ This is a macOS app that allows you to translate Japanese text in comic images. 
 
 ## Next features
 
-[ ] Choose original input language (ex: Japanese, English, Chinese, French, Korean, autodetect, etc.)
-[ ] Choose output language (and detect if a string is already in the output language beyond my hack for english to skip translation)
-[ ] Fix known issues
-[ ] Stop button
+- [ ] Choose original input language (ex: Japanese, English, Chinese, French, Korean, autodetect, etc.)
+- [ ] Choose output language (and detect if a string is already in the output language beyond my hack for english to skip translation)
+- [ ] Fix known issues
+- [ ] Stop button
 
 ## Wishful next features
 
 These are features I want, but I'm not sure if they are easy to implement.
 
-[ ] Merge boxes automatically (two lines of the same sentence show up as two boxes, which make nonsensical sentences, something to merge close together boxes logically, also support vertical writing support for jp)
-[ ] Make the bounding box detection follow the orientation of the text, so instead of a simple rectangle, it would be a rotated rectangle.  Or a polygon.
-[ ] Support fancy manga style text, like sound effects, fancy titles, etc.
-[ ] Auto-detect language of the text
-[ ] Make this a browser extension for full local translation of images.  Make it run automatically with images beyond a certain size on a white list of pages. 
-[ ] Make the text overlays match the background style of the original text and clean out the original text itself.
+- [ ] Merge boxes automatically (two lines of the same sentence show up as two boxes, which make nonsensical sentences, something to merge close together boxes logically, also support vertical writing support for jp)
+- [ ] Make the bounding box detection follow the orientation of the text, so instead of a simple rectangle, it would be a rotated rectangle.  Or a polygon.
+- [ ] Support fancy manga style text, like sound effects, fancy titles, etc.
+- [ ] Auto-detect language of the text
+- [ ] Make this a browser extension for full local translation of images.  Make it run automatically with images beyond a certain size on a white list of pages. 
+- [ ] Make the text overlays match the background style of the original text and clean out the original text itself.
 
 
