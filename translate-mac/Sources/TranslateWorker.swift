@@ -30,7 +30,9 @@ public class TranslateWorker {
     config = Config(showBoxes: showBoxes, showTranslations: showTranslations)
   }
 
-  public func translateImage(at url: URL, using session: TranslationSession) async throws -> URL {
+  public func translateImage(
+    at url: URL, destinationDirectory: URL?, using session: TranslationSession
+  ) async throws -> URL {
     print("Starting translation of image at \(url)")
 
     // 1. Load the image
@@ -67,11 +69,11 @@ public class TranslateWorker {
     print("Created translated image")
 
     // 6. Save image and translations
-    let baseURL = url.deletingLastPathComponent()
     let imageName = url.deletingPathExtension().lastPathComponent
+    let saveDirectory = destinationDirectory ?? url.deletingLastPathComponent()
 
-    let imageURL = baseURL.appendingPathComponent("translated_\(url.lastPathComponent)")
-    let translationsURL = baseURL.appendingPathComponent("\(imageName)_translations.txt")
+    let imageURL = saveDirectory.appendingPathComponent("\(imageName).png")
+    let translationsURL = saveDirectory.appendingPathComponent("\(imageName).txt")
 
     // Save image
     try translatedImage.save(to: imageURL)
