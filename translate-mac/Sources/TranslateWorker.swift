@@ -3,11 +3,12 @@ import Foundation
 import Translation
 import Vision
 
-#if canImport(UIKit)
-  import UIKit
-#elseif canImport(AppKit)
-  import AppKit
-#endif
+public protocol PlatformImageCreator {
+  func createImage(
+    size: CGSize, cgImage: CGImage, triplets: [(VNTextObservation, String, String)],
+    config: TranslateWorker.Config
+  ) throws -> CIImage
+}
 
 public class TranslateWorker {
   public struct Config {
@@ -21,9 +22,15 @@ public class TranslateWorker {
   }
 
   private var config: Config
+  private let imageCreator: PlatformImageCreator
 
   public init(config: Config = Config()) {
     self.config = config
+    #if os(macOS)
+      self.imageCreator = MacOSImageCreator()
+    #elseif os(iOS)
+      self.imageCreator = IOSImageCreator()
+    #endif
   }
 
   public func updateConfig(showBoxes: Bool, showTranslations: Bool) {
@@ -72,8 +79,12 @@ public class TranslateWorker {
     let imageName = url.deletingPathExtension().lastPathComponent
     let saveDirectory = destinationDirectory ?? url.deletingLastPathComponent()
 
+    // Create translatedText directory
+    let textDirectory = saveDirectory.appendingPathComponent("translatedText", isDirectory: true)
+    try FileManager.default.createDirectory(at: textDirectory, withIntermediateDirectories: true)
+
     let imageURL = saveDirectory.appendingPathComponent("\(imageName).png")
-    let translationsURL = saveDirectory.appendingPathComponent("\(imageName).txt")
+    let translationsURL = textDirectory.appendingPathComponent("\(imageName).txt")
 
     // Save image
     try translatedImage.save(to: imageURL)
@@ -92,9 +103,11 @@ public class TranslateWorker {
 
   private func detectTextRegions(in image: CIImage) async throws -> [VNTextObservation] {
     var textObservations: [VNTextObservation] = []
+    var detectionError: Error?
 
     let request = VNRecognizeTextRequest { request, error in
-      guard error == nil else {
+      if let error = error {
+        detectionError = error
         print("Text detection error: \(String(describing: error))")
         return
       }
@@ -114,7 +127,14 @@ public class TranslateWorker {
     let handler = VNImageRequestHandler(ciImage: image)
     try handler.perform([request])
 
+    if let error = detectionError {
+      throw TranslationError.textRecognitionFailed
+    }
+
     print("Text detection results count: \(textObservations.count)")
+    if textObservations.isEmpty {
+      throw TranslationError.textRecognitionFailed
+    }
     return textObservations
   }
 
@@ -123,9 +143,13 @@ public class TranslateWorker {
     regions: [VNTextObservation]
   ) async throws -> [String] {
     var recognizedTexts: [String] = []
+    var recognitionError: Error?
 
     let request = VNRecognizeTextRequest { request, error in
-      guard error == nil else { return }
+      if let error = error {
+        recognitionError = error
+        return
+      }
       guard let observations = request.results as? [VNRecognizedTextObservation] else { return }
 
       for observation in observations {
@@ -142,6 +166,14 @@ public class TranslateWorker {
     let handler = VNImageRequestHandler(ciImage: image)
     try handler.perform([request])
 
+    if recognitionError != nil {
+      throw TranslationError.textRecognitionFailed
+    }
+
+    if recognizedTexts.isEmpty {
+      throw TranslationError.textRecognitionFailed
+    }
+
     return recognizedTexts
   }
 
@@ -149,16 +181,30 @@ public class TranslateWorker {
     -> [String]
   {
     var translatedTexts: [String] = []
+    var translationErrors: [Error] = []
 
     for text in texts {
-      let response = try await session.translate(text)
-      translatedTexts.append(response.targetText)
+      do {
+        let response = try await session.translate(text)
+        translatedTexts.append(response.targetText)
+      } catch {
+        translationErrors.append(error)
+      }
+    }
+
+    // If we have some translations but not all, we can still proceed
+    if !translatedTexts.isEmpty {
+      return translatedTexts
+    }
+
+    // If we have no translations at all, throw an error
+    if !translationErrors.isEmpty {
+      throw TranslationError.translationFailed
     }
 
     return translatedTexts
   }
 
-  // Keep isEnglish helper function for future use
   private func isEnglish(_ text: String) -> Bool {
     let englishLetters = CharacterSet(
       charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
@@ -179,164 +225,9 @@ public class TranslateWorker {
     }
 
     let size = CGSize(width: cgImage.width, height: cgImage.height)
-
-    #if os(iOS)
-      let finalImage = createImageiOS(
-        size: size,
-        cgImage: cgImage,
-        triplets: triplets
-      )
-    #elseif os(macOS)
-      let finalImage = try createImageMacOS(
-        size: size,
-        cgImage: cgImage,
-        triplets: triplets
-      )
-    #endif
-
-    #if os(iOS)
-      guard let cgImage = finalImage.cgImage else {
-        throw TranslationError.imageGenerationFailed
-      }
-      let outputCIImage = CIImage(cgImage: cgImage)
-    #elseif os(macOS)
-      var proposedRect: NSRect = .zero
-      guard
-        let cgImage = finalImage.cgImage(forProposedRect: &proposedRect, context: nil, hints: nil)
-      else {
-        throw TranslationError.imageGenerationFailed
-      }
-      let outputCIImage = CIImage(cgImage: cgImage)
-    #endif
-
-    return outputCIImage
+    return try imageCreator.createImage(
+      size: size, cgImage: cgImage, triplets: triplets, config: config)
   }
-
-  #if os(iOS)
-    private func createImageiOS(
-      size: CGSize,
-      cgImage: CGImage,
-      triplets: [(VNTextObservation, String, String)]
-    ) -> UIImage {
-      let renderer = UIGraphicsImageRenderer(size: size)
-
-      return renderer.image { context in
-        // Draw original image
-        UIImage(cgImage: cgImage).draw(in: CGRect(origin: .zero, size: size))
-
-        for (region, _, translatedText) in triplets {
-          let boundingBox = region.boundingBox
-          let rect = CGRect(
-            x: boundingBox.origin.x * size.width,
-            y: boundingBox.origin.y * size.height,
-            width: boundingBox.width * size.width,
-            height: boundingBox.height * size.height
-          )
-
-          if config.showBoxes {
-            // Draw rectangle
-            context.cgContext.setStrokeColor(UIColor.red.cgColor)
-            context.cgContext.setLineWidth(2.0)
-            context.cgContext.stroke(rect)
-          }
-
-          if config.showTranslations {
-            // Draw translated text
-            let attributes: [NSAttributedString.Key: Any] = [
-              .foregroundColor: UIColor.white,
-              .backgroundColor: UIColor.black.withAlphaComponent(0.7),
-            ]
-
-            // Find font size that fits
-            var fontSize: CGFloat = 24
-            var textSize: CGSize
-            repeat {
-              let font = UIFont.systemFont(ofSize: fontSize)
-              textSize = translatedText.size(withAttributes: [.font: font])
-              fontSize -= 1
-            } while (textSize.width > rect.width || textSize.height > rect.height) && fontSize > 8
-
-            let finalAttributes = attributes.merging([.font: UIFont.systemFont(ofSize: fontSize)]) {
-              $1
-            }
-            let textRect = CGRect(
-              x: rect.minX,
-              y: rect.minY + (rect.height - textSize.height) / 2,
-              width: rect.width,
-              height: textSize.height
-            )
-
-            translatedText.draw(in: textRect, withAttributes: finalAttributes)
-          }
-        }
-      }
-    }
-  #elseif os(macOS)
-    private func createImageMacOS(
-      size: CGSize,
-      cgImage: CGImage,
-      triplets: [(VNTextObservation, String, String)]
-    ) throws -> NSImage {
-      let image = NSImage(size: size)
-
-      image.lockFocus()
-      defer { image.unlockFocus() }
-
-      // Draw original image
-      let imageRect = CGRect(origin: .zero, size: size)
-      NSImage(cgImage: cgImage, size: size).draw(in: imageRect)
-
-      for (region, _, translatedText) in triplets {
-        let boundingBox = region.boundingBox
-        let rect = CGRect(
-          x: boundingBox.origin.x * size.width,
-          y: boundingBox.origin.y * size.height,
-          width: boundingBox.width * size.width,
-          height: boundingBox.height * size.height
-        )
-
-        if config.showBoxes {
-          // Draw rectangle
-          NSColor.red.setStroke()
-          let path = NSBezierPath()
-          path.lineWidth = 2.0
-          path.appendRect(rect)
-          path.stroke()
-        }
-
-        if config.showTranslations {
-          // Draw translated text
-          let attributes: [NSAttributedString.Key: Any] = [
-            .foregroundColor: NSColor.white,
-            .backgroundColor: NSColor.black.withAlphaComponent(0.7),
-          ]
-
-          // Find font size that fits
-          var fontSize: CGFloat = 24
-          var textSize: CGSize
-          repeat {
-            let font = NSFont.systemFont(ofSize: fontSize)
-            textSize = translatedText.size(withAttributes: [.font: font])
-            fontSize -= 1
-          } while (textSize.width > rect.width || textSize.height > rect.height) && fontSize > 8
-
-          let finalAttributes = attributes.merging([.font: NSFont.systemFont(ofSize: fontSize)]) {
-            $1
-          }
-          let textRect = CGRect(
-            x: rect.minX,
-            y: rect.minY + (rect.height - textSize.height) / 2,
-            width: rect.width,
-            height: textSize.height
-          )
-
-          translatedText.draw(in: textRect, withAttributes: finalAttributes)
-        }
-      }
-
-      return image
-    }
-  #endif
 
   private func createTranslationTriplet(
     regions: [VNTextObservation],
@@ -345,15 +236,46 @@ public class TranslateWorker {
   ) -> [(VNTextObservation, String, String)] {
     return zip(zip(regions, japaneseTexts), translatedTexts)
       .map { (($0.0, $0.1, $1)) }
-      .filter { !isEnglish($0.1) }  // Filter based on Japanese text
+      .filter { !isEnglish($0.1) }  // Filter out english text
   }
 }
 
-enum TranslationError: Error {
+enum TranslationError: LocalizedError {
   case invalidImage
   case textRecognitionFailed
   case translationFailed
   case imageGenerationFailed
+
+  public var errorDescription: String? {
+    switch self {
+    case .invalidImage:
+      return "Unable to load the image. Please make sure it's a valid image file."
+    case .textRecognitionFailed:
+      return
+        "Failed to recognize text in the image. Please ensure the image is clear and contains readable text."
+    case .translationFailed:
+      return "Failed to translate the text. Please check your internet connection and try again."
+    case .imageGenerationFailed:
+      return "Failed to generate the translated image. Please try again with a different image."
+    }
+  }
+
+  public var recoverySuggestion: String? {
+    switch self {
+    case .invalidImage:
+      return
+        "Try using a different image file format (like PNG or JPEG) or selecting a different image."
+    case .textRecognitionFailed:
+      return
+        "Try using an image with better lighting and contrast, or make sure the text is not too small or blurry."
+    case .translationFailed:
+      return
+        "Check your internet connection and try again. If the problem persists, the translation service might be temporarily unavailable."
+    case .imageGenerationFailed:
+      return
+        "Try using a smaller image or one with less text. If the problem persists, try restarting the application."
+    }
+  }
 }
 
 // Add this extension to CIImage for saving
